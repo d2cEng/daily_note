@@ -1,6 +1,7 @@
 // settings.js — 백업 / 가져오기 / 초기화 / 면책
 import { exportJson, importJson, importTsv, importEntries, clearAll, getAll } from './store.js';
 import { parseInbodyCsv } from './inbody.js';
+import { ocrImage, parseOkokOcrText, okokReviewCard } from './okok-ocr.js';
 import { el, clear, downloadFile, fmtDate } from './util.js';
 import { toast, navigate } from './app.js';
 
@@ -41,6 +42,14 @@ export function renderSettings(host) {
     style: { marginTop: '8px' },
     onClick: () => inbodyInput.click(),
   }, '🧬 InBody CSV 가져오기'));
+  backup.appendChild(el('button', {
+    class: 'btn btn--block',
+    style: { marginTop: '8px' },
+    onClick: () => okokInput.click(),
+  }, '📷 OKOK 스크린샷 가져오기'));
+  // OCR 진행/검토 영역
+  const okokArea = el('div', { style: { marginTop: '12px' } });
+  backup.appendChild(okokArea);
 
   const readFile = (f, importer, label) => {
     const reader = new FileReader();
@@ -74,9 +83,38 @@ export function renderSettings(host) {
       if (f) readFile(f, (txt, mode) => importEntries(parseInbodyCsv(txt), mode), 'InBody');
     },
   });
+  const okokInput = el('input', {
+    type: 'file', accept: 'image/*',
+    style: { display: 'none' },
+    onChange: async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const imageUrl = URL.createObjectURL(f);
+      clear(okokArea);
+      const status = el('div', { class: 'note' }, 'OCR 분석 중… 0%');
+      okokArea.appendChild(status);
+      try {
+        const text = await ocrImage(f, (p) => {
+          status.textContent = `OCR 분석 중… ${Math.round(p * 100)}%`;
+        });
+        const parsed = parseOkokOcrText(text);
+        clear(okokArea);
+        okokArea.appendChild(okokReviewCard(parsed, {
+          imageUrl,
+          onSaved: () => { clear(okokArea); navigate('settings'); },
+        }));
+      } catch (err) {
+        clear(okokArea);
+        okokArea.appendChild(el('div', { class: 'note note--warn' }, 'OCR 실패: ' + err.message));
+      } finally {
+        okokInput.value = '';
+      }
+    },
+  });
   backup.appendChild(fileInput);
   backup.appendChild(tsvInput);
   backup.appendChild(inbodyInput);
+  backup.appendChild(okokInput);
   host.appendChild(backup);
 
   // 초기화
