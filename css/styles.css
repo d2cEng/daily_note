@@ -699,6 +699,20 @@ svg.trend {
   border-radius: 50%;
 }
 
+/* OKOK 스크린샷 OCR */
+.ocr-preview {
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  margin-bottom: 12px;
+  background: #000;
+}
+.input--missing {
+  border-color: var(--neon-amber) !important;
+}
+
 /* 선택 날짜 지표 칩 */
 .metric-chips {
   display: flex;
