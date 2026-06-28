@@ -5,9 +5,11 @@ import { renderWorkout } from './workout.js';
 import { renderWeight } from './weight.js';
 import { renderSupplement } from './supplement.js';
 import { renderSettings } from './settings.js';
+import { renderCalendar } from './calendar.js';
 
 const VIEWS = {
   home: { el: 'view-home', render: renderHome },
+  calendar: { el: 'view-calendar', render: renderCalendar },
   workout: { el: 'view-workout', render: renderWorkout },
   weight: { el: 'view-weight', render: renderWeight },
   supplement: { el: 'view-supplement', render: renderSupplement },

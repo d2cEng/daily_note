@@ -4,6 +4,7 @@ import { add, getByCategory, remove, subscribe } from './store.js';
 import { el, clear, fmtDate, fmtYearMonth, fmtDateTime, signed, parseMeasuredAt, num } from './util.js';
 import { renderTrendChart } from './chart.js';
 import { toast } from './app.js';
+import { detectWeightDataIssue, summarizeIssue, detectWeightOutlierIssues } from './quality.js';
 
 // ── §1.3 지표 사전 ─────────────────────────────────
 export const OKOK_METRICS = [
@@ -47,11 +48,17 @@ export function buildInbodyMemoText({ weight, skeletalMuscle, bodyFat, note }) {
   return parts.join(' / ');
 }
 
-export function buildOkokMemoText({ weight, bodyFat, bmi, measuredAt, note }) {
+export function buildOkokMemoText({ weight, bodyFat, bmi, measuredAt, note, details }) {
   const parts = ['[OKOK]', `체중 ${ensureUnit(weight, 'kg')}`];
   if (bodyFat) parts.push(`체지방률 ${ensureUnit(bodyFat, '%')}`);
   if (bmi) parts.push(`BMI ${bmi}`);
   if (measuredAt) parts.push(`측정일 ${measuredAt}`);
+  // 상세 19개 지표: [label, value] 배열. 값 있는 것만 라벨 토큰으로 추가.
+  if (Array.isArray(details)) {
+    for (const [label, value] of details) {
+      if (value !== '' && value != null) parts.push(`${label} ${value}`);
+    }
+  }
   if (note) parts.push(`메모 ${note}`);
   return parts.join(' / ');
 }
@@ -171,13 +178,38 @@ function composer(onSaved) {
       formHost.appendChild(field('BMI', bmi));
       formHost.appendChild(field('측정일', md));
       formHost.appendChild(field('메모', note));
+
+      // 상세 19개 지표 (접이식) — 메인 입력과 겹치는 3개 제외
+      const detailLabels = OKOK_METRICS.filter(
+        (l) => !['체중(Kg)', 'BMI', '지방(%)'].includes(l)
+      );
+      const detailInputs = {};
+      const grid = el('div', { class: 'detail-grid' });
+      for (const label of detailLabels) {
+        const di = el('input', { type: 'number', inputmode: 'decimal', placeholder: '선택' });
+        detailInputs[label] = di;
+        grid.appendChild(el('label', { class: 'field' }, [el('span', {}, label), di]));
+      }
+      const det = el('details', { class: 'detail-fold' }, [
+        el('summary', {}, '상세 19개 지표 입력 (선택)'),
+        grid,
+      ]);
+      formHost.appendChild(det);
+
       formHost.appendChild(saveBtn(() => {
         if (!w.value) return toast('OKOK 체중 값을 입력해주세요.');
         if (md.value && !parseMeasuredAt(md.value))
           return toast('측정일을 yyyy/MM/dd HH:mm:ss 형식으로 입력해주세요.');
+        // 메인 필드를 표준 라벨로도 기록 → 품질/이상치 검출 일관성 확보
+        const details = [
+          ['체중(Kg)', w.value],
+          ['BMI', bmi.value],
+          ['지방(%)', bf.value],
+          ...detailLabels.map((l) => [l, detailInputs[l].value]),
+        ];
         const text = buildOkokMemoText({
           weight: w.value, bodyFat: bf.value, bmi: bmi.value,
-          measuredAt: md.value, note: note.value,
+          measuredAt: md.value, note: note.value, details,
         });
         save(text, WEIGHT_ROUTE.OKOK, num(w.value));
       }));
@@ -300,6 +332,65 @@ function insightPanel(allEntries) {
   return card;
 }
 
+// ── 데이터 품질 / 이상치 필터 패널 (참고 §1.8) ──────
+let qualityFilter = 'ALL'; // ALL | FAIL | OUTLIER
+function qualityPanel(all) {
+  const outliers = detectWeightOutlierIssues(all);
+  const rows = all.map((e) => ({
+    entry: e,
+    fail: detectWeightDataIssue(e),
+    outlier: outliers.get(e.id) || null,
+  })).filter((r) => r.fail || r.outlier);
+
+  const failCount = rows.filter((r) => r.fail).length;
+  const outCount = rows.filter((r) => r.outlier).length;
+
+  const card = el('div', { class: 'card' });
+  card.appendChild(el('h2', { class: 'card__title' }, '데이터 품질 점검'));
+
+  if (!rows.length) {
+    card.appendChild(el('div', { class: 'empty' }, '검출된 누락·이상치가 없습니다. 👍'));
+    return card;
+  }
+
+  const tabs = el('div', { class: 'chip-row' });
+  for (const [key, label] of [['ALL', '전체'], ['FAIL', '검출 실패만'], ['OUTLIER', '이상치만']]) {
+    tabs.appendChild(el('button', {
+      class: 'chip' + (qualityFilter === key ? ' active' : ''),
+      onClick: () => { qualityFilter = key; card.replaceWith(qualityPanel(all)); },
+    }, label));
+  }
+  card.appendChild(tabs);
+
+  const visible = rows.filter((r) =>
+    qualityFilter === 'ALL' ? true : qualityFilter === 'FAIL' ? r.fail : r.outlier
+  );
+  for (const r of visible) {
+    const box = el('div', { class: 'issue ' + (r.outlier ? 'issue--outlier' : 'issue--fail') });
+    box.appendChild(el('div', { class: 'entry__head' }, [
+      el('b', {}, weightKg(r.entry) != null ? `${weightKg(r.entry)}kg` : '기록'),
+      el('span', { class: 'entry__date' }, fmtDateTime(timelineTime(r.entry))),
+    ]));
+    if (r.fail) {
+      box.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } }, [
+        el('span', { class: 'issue__tag' }, '검출실패'), summarizeIssue(r.fail),
+      ]));
+    }
+    if (r.outlier) {
+      const txt = r.outlier
+        .map((o) => `${o.label} ${o.value} (정상 ${o.range[0].toFixed(1)}~${o.range[1].toFixed(1)})`)
+        .join(', ');
+      box.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } }, [
+        el('span', { class: 'issue__tag' }, '이상치'), txt,
+      ]));
+    }
+    card.appendChild(box);
+  }
+  card.appendChild(el('div', { class: 'faint', style: { marginTop: '6px' } },
+    `전체 ${rows.length}건 · 검출실패 ${failCount}건 · 이상치 ${outCount}건`));
+  return card;
+}
+
 // ── 체중 탭 렌더 ────────────────────────────────────
 let unsub = null;
 let monthFilter = 'ALL';
@@ -322,6 +413,7 @@ export function renderWeight(host) {
     }
 
     host.appendChild(insightPanel(all));
+    host.appendChild(qualityPanel(all));
 
     // 달별 네비게이터 (참고 §1.7)
     const months = [...new Set(all.map((e) => {

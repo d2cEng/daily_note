@@ -17,7 +17,7 @@ export function renderSettings(host) {
       el('button', {
         class: 'btn btn--primary',
         onClick: () => {
-          downloadFile(`neonlift-backup-${fmtDate(Date.now())}.json`, exportJson());
+          downloadFile(`vitalog-backup-${fmtDate(Date.now())}.json`, exportJson());
           toast('백업 파일을 내보냈습니다.');
         },
       }, '⬇ JSON 내보내기'),
@@ -68,7 +68,7 @@ export function renderSettings(host) {
 
   // 정보 / 면책
   host.appendChild(el('div', { class: 'card' }, [
-    el('h2', { class: 'card__title' }, 'NEON LIFT 정보'),
+    el('h2', { class: 'card__title' }, 'VITALOG 정보'),
     el('div', { class: 'muted', style: { fontSize: '13px' } },
       'Technogym 기기 짐에서의 운동·체중·보충제를 가이드 세션으로 기록하는 오프라인 웹앱입니다. 휴대폰 홈 화면에 추가하면 앱처럼 사용할 수 있습니다.'),
     el('div', { class: 'disclaimer' },

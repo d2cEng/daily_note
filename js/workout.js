@@ -1,7 +1,7 @@
 // workout.js — 운동(WORKOUT) 탭 (참고 문서 §2)
 import { CATEGORY } from './model.js';
 import { makeEntry } from './model.js';
-import { add, getByCategory, remove, subscribe } from './store.js';
+import { add, getByCategory, remove, update, subscribe } from './store.js';
 import { el, clear, fmtDate } from './util.js';
 import { navigate, toast } from './app.js';
 
@@ -37,13 +37,26 @@ export const WORKOUT_MACHINE_CATEGORIES = [
     type: TYPE.STRENGTH,
     machines: ['Squat', 'Bench Press', 'Deadlift', 'Overhead Press'],
   },
+  // 홈 보유 장비 (로잉머신·벤치·10kg덤벨2·전완근·AB슬라이더·스테퍼)
+  {
+    name: 'Home',
+    type: TYPE.STRENGTH,
+    machines: [
+      'Rowing Machine', 'Stepper', 'DB Bench Press', 'DB Fly',
+      'DB Shoulder Press', 'DB Curl', 'DB Row', 'Goblet Squat',
+      'DB Lunge', 'Wrist Curl', 'Ab Roller',
+    ],
+  },
 ];
+
+// 유산소 타입인 머신명 (Home 카테고리는 기본 STRENGTH라 예외 처리)
+const CARDIO_MACHINES = new Set(['Rowing Machine', 'Stepper']);
 
 // 머신명 → 타입 사전
 export const ALL_WORKOUT_MACHINES = (() => {
   const map = {};
   for (const c of WORKOUT_MACHINE_CATEGORIES) {
-    for (const m of c.machines) map[m] = c.type;
+    for (const m of c.machines) map[m] = CARDIO_MACHINES.has(m) ? TYPE.CARDIO : c.type;
   }
   return map;
 })();
@@ -170,7 +183,7 @@ function parseToken(token) {
 
 // ── 운동 에디터 (참고 §2.2) ─────────────────────────
 // 재사용 가능: 가이드 세션에서 머신 프리필 후 사용.
-export function createWorkoutEditor(host, { initialMachines = [], onSaved } = {}) {
+export function createWorkoutEditor(host, { initialMachines = [], editEntry = null, onSaved, onCancel } = {}) {
   let activeCat = WORKOUT_MACHINE_CATEGORIES[0].name;
   let exercises = []; // {machineName,type,sets,durationMin,distanceKm}
 
@@ -186,9 +199,13 @@ export function createWorkoutEditor(host, { initialMachines = [], onSaved } = {}
     render();
   }
 
-  // 프리필
-  for (const mn of initialMachines) {
-    if (ALL_WORKOUT_MACHINES[mn]) addMachine(mn, ALL_WORKOUT_MACHINES[mn]);
+  // 프리필: 수정 모드면 기존 항목 복원, 아니면 추천 머신
+  if (editEntry) {
+    exercises = parseWorkoutMemoText(editEntry.text);
+  } else {
+    for (const mn of initialMachines) {
+      if (ALL_WORKOUT_MACHINES[mn]) addMachine(mn, ALL_WORKOUT_MACHINES[mn]);
+    }
   }
 
   function render() {
@@ -223,7 +240,7 @@ export function createWorkoutEditor(host, { initialMachines = [], onSaved } = {}
           'button',
           {
             class: 'chip' + (added ? ' chip--added' : ''),
-            onClick: () => addMachine(m, cat.type),
+            onClick: () => addMachine(m, ALL_WORKOUT_MACHINES[m] || cat.type),
           },
           added ? `✓ ${m}` : m
         )
@@ -241,7 +258,7 @@ export function createWorkoutEditor(host, { initialMachines = [], onSaved } = {}
     exercises.forEach((ex, i) => list.appendChild(exerciseCard(ex, i)));
     host.appendChild(list);
 
-    // 저장
+    // 저장 (+ 수정 모드면 취소)
     host.appendChild(
       el(
         'button',
@@ -250,9 +267,18 @@ export function createWorkoutEditor(host, { initialMachines = [], onSaved } = {}
           style: { marginTop: '8px' },
           onClick: save,
         },
-        '운동 저장'
+        editEntry ? '수정 저장' : '운동 저장'
       )
     );
+    if (editEntry && onCancel) {
+      host.appendChild(
+        el('button', {
+          class: 'btn btn--ghost btn--block',
+          style: { marginTop: '8px' },
+          onClick: onCancel,
+        }, '취소')
+      );
+    }
   }
 
   function exerciseCard(ex, i) {
@@ -392,10 +418,15 @@ export function createWorkoutEditor(host, { initialMachines = [], onSaved } = {}
       toast('운동 데이터를 입력해주세요.');
       return;
     }
-    add(makeEntry({ text, category: CATEGORY.WORKOUT }));
-    toast('운동 저장 완료 💪');
-    exercises = [];
-    render();
+    if (editEntry) {
+      update(editEntry.id, { text });
+      toast('운동 수정 완료 ✏️');
+    } else {
+      add(makeEntry({ text, category: CATEGORY.WORKOUT }));
+      toast('운동 저장 완료 💪');
+      exercises = [];
+      render();
+    }
     if (onSaved) onSaved(text);
   }
 
@@ -412,16 +443,41 @@ export function renderWorkout(host) {
   if (unsub) unsub();
   clear(host);
 
-  const editorCard = el('div', { class: 'card card--glow' }, [
-    el('h2', { class: 'card__title' }, '운동 편집'),
-  ]);
+  let editingId = null;
+
+  const editorCard = el('div', { class: 'card card--glow' });
+  const editorTitle = el('h2', { class: 'card__title' }, '운동 편집');
   const editorHost = el('div');
+  editorCard.appendChild(editorTitle);
   editorCard.appendChild(editorHost);
   host.appendChild(editorCard);
-  createWorkoutEditor(editorHost, {});
+
+  const historyHost = el('div');
+
+  const drawEditor = () => {
+    clear(editorHost);
+    const entry = editingId
+      ? getByCategory(CATEGORY.WORKOUT).find((e) => e.id === editingId)
+      : null;
+    editorTitle.textContent = entry ? `운동 수정 · ${fmtDate(entry.createdAt)}` : '운동 편집';
+    editorCard.classList.toggle('card--glow', true);
+    createWorkoutEditor(editorHost, {
+      editEntry: entry,
+      onSaved: () => { editingId = null; drawEditor(); renderHistory(); },
+      onCancel: () => { editingId = null; drawEditor(); },
+    });
+  };
+
+  const startEdit = (entry) => {
+    editingId = entry.id;
+    drawEditor();
+    host.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  drawEditor();
 
   host.appendChild(el('div', { class: 'section-title' }, '운동 이력'));
-  const historyHost = el('div');
   host.appendChild(historyHost);
 
   const renderHistory = () => {
@@ -434,14 +490,14 @@ export function renderWorkout(host) {
       return;
     }
     for (const entry of items) {
-      historyHost.appendChild(workoutHistoryCard(entry, renderHistory));
+      historyHost.appendChild(workoutHistoryCard(entry, renderHistory, startEdit));
     }
   };
   renderHistory();
   unsub = subscribe(renderHistory);
 }
 
-function workoutHistoryCard(entry, refresh) {
+function workoutHistoryCard(entry, refresh, onEdit) {
   const exercises = parseWorkoutMemoText(entry.text);
   const card = el('div', { class: 'entry' });
   card.appendChild(
@@ -452,6 +508,16 @@ function workoutHistoryCard(entry, refresh) {
         'button',
         {
           class: 'x',
+          title: '수정',
+          onClick: () => onEdit && onEdit(entry),
+        },
+        '✎'
+      ),
+      el(
+        'button',
+        {
+          class: 'x',
+          title: '삭제',
           onClick: () => {
             remove(entry.id);
             refresh();
