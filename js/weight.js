@@ -66,11 +66,17 @@ export function buildOkokMemoText({ weight, bodyFat, bmi, measuredAt, note, deta
 // ── §3 지표값 추출 ─────────────────────────────────
 export function extractWeightMetricValue(text, label) {
   text = stripOcrRaw(text); // 원본 OCR 영역의 잡음 숫자 배제
-  const idx = text.indexOf(label);
-  if (idx === -1) return null;
-  const after = text.slice(idx + label.length);
-  const m = after.match(/(-?\d+(?:[.,]\d+)?)/);
-  return m ? parseFloat(m[1].replace(',', '.')) : null;
+  // 라벨이 더 긴 라벨의 접두사인 경우(예: '내장지방' ⊂ '내장지방단면적')를 피하려고
+  // 라벨 바로 뒤(공백 허용)에 숫자가 오는 위치만 인정.
+  let from = 0;
+  while (true) {
+    const idx = text.indexOf(label, from);
+    if (idx === -1) return null;
+    const after = text.slice(idx + label.length);
+    const m = after.match(/^\s*(-?\d+(?:[.,]\d+)?)/);
+    if (m) return parseFloat(m[1].replace(',', '.'));
+    from = idx + label.length;
+  }
 }
 
 // 체중 kg 값 (캐시 amount 우선)

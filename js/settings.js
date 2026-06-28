@@ -1,5 +1,6 @@
 // settings.js — 백업 / 가져오기 / 초기화 / 면책
-import { exportJson, importJson, importTsv, clearAll, getAll } from './store.js';
+import { exportJson, importJson, importTsv, importEntries, clearAll, getAll } from './store.js';
+import { parseInbodyCsv } from './inbody.js';
 import { el, clear, downloadFile, fmtDate } from './util.js';
 import { toast, navigate } from './app.js';
 
@@ -28,13 +29,18 @@ export function renderSettings(host) {
     ]),
   ]);
 
-  // 메모앱 TSV 가져오기
+  // 메모앱 TSV / InBody CSV 가져오기
   backup.appendChild(el('div', { class: 'muted', style: { margin: '14px 0 8px', fontSize: '13px' } },
-    '안드로이드 메모앱에서 내보낸 체중/운동 TSV 파일을 직접 불러올 수 있습니다.'));
+    '안드로이드 메모앱 TSV, 또는 InBody 앱이 내보낸 CSV를 직접 불러올 수 있습니다.'));
   backup.appendChild(el('button', {
     class: 'btn btn--block',
     onClick: () => tsvInput.click(),
   }, '📄 메모앱 TSV 가져오기'));
+  backup.appendChild(el('button', {
+    class: 'btn btn--block',
+    style: { marginTop: '8px' },
+    onClick: () => inbodyInput.click(),
+  }, '🧬 InBody CSV 가져오기'));
 
   const readFile = (f, importer, label) => {
     const reader = new FileReader();
@@ -60,8 +66,17 @@ export function renderSettings(host) {
     style: { display: 'none' },
     onChange: (e) => { const f = e.target.files[0]; if (f) readFile(f, importTsv, '메모앱'); },
   });
+  const inbodyInput = el('input', {
+    type: 'file', accept: '.csv,text/csv,text/plain',
+    style: { display: 'none' },
+    onChange: (e) => {
+      const f = e.target.files[0];
+      if (f) readFile(f, (txt, mode) => importEntries(parseInbodyCsv(txt), mode), 'InBody');
+    },
+  });
   backup.appendChild(fileInput);
   backup.appendChild(tsvInput);
+  backup.appendChild(inbodyInput);
   host.appendChild(backup);
 
   // 초기화

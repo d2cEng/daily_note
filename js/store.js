@@ -112,6 +112,12 @@ function mergeEntries(incoming, mode = 'merge') {
   return incoming.length;
 }
 
+/** 외부 모듈이 만든 MemoEntry 배열을 병합 (예: InBody CSV 파서). */
+export function importEntries(entries, mode = 'merge') {
+  if (!Array.isArray(entries) || !entries.length) throw new Error('가져올 기록이 없습니다.');
+  return mergeEntries(entries, mode);
+}
+
 /**
  * JSON 가져오기. mode: 'replace' | 'merge'
  * 반환: 추가/대체된 건수
