@@ -1,0 +1,79 @@
+// settings.js — 백업 / 가져오기 / 초기화 / 면책
+import { exportJson, importJson, clearAll, getAll } from './store.js';
+import { el, clear, downloadFile, fmtDate } from './util.js';
+import { toast, navigate } from './app.js';
+
+export function renderSettings(host) {
+  clear(host);
+
+  const count = getAll().length;
+
+  // 백업
+  const backup = el('div', { class: 'card' }, [
+    el('h2', { class: 'card__title' }, '데이터 백업'),
+    el('div', { class: 'muted', style: { marginBottom: '12px' } },
+      `현재 ${count}건의 기록이 이 기기에 저장되어 있습니다. 데이터는 브라우저(localStorage)에만 보관됩니다.`),
+    el('div', { class: 'btn-row' }, [
+      el('button', {
+        class: 'btn btn--primary',
+        onClick: () => {
+          downloadFile(`neonlift-backup-${fmtDate(Date.now())}.json`, exportJson());
+          toast('백업 파일을 내보냈습니다.');
+        },
+      }, '⬇ JSON 내보내기'),
+      el('button', {
+        class: 'btn',
+        onClick: () => fileInput.click(),
+      }, '⬆ JSON 가져오기'),
+    ]),
+  ]);
+  const fileInput = el('input', {
+    type: 'file', accept: 'application/json,.json',
+    style: { display: 'none' },
+    onChange: (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const n = importJson(reader.result, 'merge');
+          toast(`${n}건을 병합했습니다.`);
+          navigate('settings');
+        } catch (err) {
+          toast('가져오기 실패: ' + err.message);
+        }
+      };
+      reader.readAsText(f);
+    },
+  });
+  backup.appendChild(fileInput);
+  host.appendChild(backup);
+
+  // 초기화
+  host.appendChild(el('div', { class: 'card' }, [
+    el('h2', { class: 'card__title' }, '데이터 초기화'),
+    el('div', { class: 'muted', style: { marginBottom: '12px' } },
+      '모든 운동·체중·보충제 기록을 삭제합니다. 되돌릴 수 없으니 먼저 백업하세요.'),
+    el('button', {
+      class: 'btn btn--danger btn--block',
+      onClick: () => {
+        if (confirm('정말 모든 기록을 삭제할까요? 되돌릴 수 없습니다.')) {
+          clearAll();
+          toast('모든 데이터를 삭제했습니다.');
+          navigate('settings');
+        }
+      },
+    }, '전체 삭제'),
+  ]));
+
+  // 정보 / 면책
+  host.appendChild(el('div', { class: 'card' }, [
+    el('h2', { class: 'card__title' }, 'NEON LIFT 정보'),
+    el('div', { class: 'muted', style: { fontSize: '13px' } },
+      'Technogym 기기 짐에서의 운동·체중·보충제를 가이드 세션으로 기록하는 오프라인 웹앱입니다. 휴대폰 홈 화면에 추가하면 앱처럼 사용할 수 있습니다.'),
+    el('div', { class: 'disclaimer' },
+      '※ 보충제·운동 안내는 일반적인 정보 제공용이며 의학적·전문적 조언이 아닙니다. ' +
+      '카페인 민감도, 기저질환, 복용 약물에 따라 적합성이 달라질 수 있으니 필요 시 전문가와 상담하세요. ' +
+      '데이터는 서버로 전송되지 않고 이 기기에만 저장됩니다.'),
+  ]));
+}

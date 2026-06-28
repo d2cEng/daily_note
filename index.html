@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0b0e14" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="description" content="운동·체중·보충제 기록과 가이드 세션 — 다크 네온 트래커" />
+    <title>NEON LIFT — 운동 트래커</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="assets/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="assets/icons/icon-192.png" />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="app-header__inner">
+        <h1 class="app-title">NEON <span class="spark">LIFT</span></h1>
+        <span class="app-header__mode" id="header-mode"></span>
+      </div>
+    </header>
+
+    <main>
+      <section id="view-home" class="view active"></section>
+      <section id="view-workout" class="view"></section>
+      <section id="view-weight" class="view"></section>
+      <section id="view-supplement" class="view"></section>
+      <section id="view-settings" class="view"></section>
+    </main>
+
+    <nav class="tabbar" id="tabbar">
+      <button class="tabbar__btn active" data-route="home">
+        <span class="ico">🏋️</span>세션
+      </button>
+      <button class="tabbar__btn" data-route="workout">
+        <span class="ico">💪</span>운동
+      </button>
+      <button class="tabbar__btn" data-route="weight">
+        <span class="ico">⚖️</span>체중
+      </button>
+      <button class="tabbar__btn" data-route="supplement">
+        <span class="ico">🥤</span>보충제
+      </button>
+      <button class="tabbar__btn" data-route="settings">
+        <span class="ico">⚙️</span>설정
+      </button>
+    </nav>
+
+    <div class="toast" id="toast"></div>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
