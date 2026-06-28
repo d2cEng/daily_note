@@ -1,7 +1,7 @@
 // weight.js — 체중(WEIGHT) 탭 (참고 문서 §1)
 import { CATEGORY, WEIGHT_ROUTE, WEIGHT_ROUTE_LABEL, WEIGHT_ROUTE_COLOR, makeEntry } from './model.js';
 import { add, getByCategory, remove, subscribe } from './store.js';
-import { el, clear, fmtDate, fmtYearMonth, fmtDateTime, signed, parseMeasuredAt, num } from './util.js';
+import { el, clear, fmtDate, fmtYearMonth, fmtDateTime, signed, parseMeasuredAt, num, stripOcrRaw } from './util.js';
 import { renderTrendChart } from './chart.js';
 import { toast } from './app.js';
 import { detectWeightDataIssue, summarizeIssue, detectWeightOutlierIssues } from './quality.js';
@@ -65,6 +65,7 @@ export function buildOkokMemoText({ weight, bodyFat, bmi, measuredAt, note, deta
 
 // ── §3 지표값 추출 ─────────────────────────────────
 export function extractWeightMetricValue(text, label) {
+  text = stripOcrRaw(text); // 원본 OCR 영역의 잡음 숫자 배제
   const idx = text.indexOf(label);
   if (idx === -1) return null;
   const after = text.slice(idx + label.length);
@@ -239,7 +240,7 @@ const PERIODS = [
   { label: '1년', days: 365 }, { label: '전체', days: Infinity },
 ];
 
-function insightPanel(allEntries) {
+function insightPanel(allEntries, selectedDay, onSelectDay) {
   let periodDays = 30;
   let metric = '체중';
   const card = el('div', { class: 'card' });
@@ -310,8 +311,10 @@ function insightPanel(allEntries) {
       card.appendChild(grid);
     }
 
-    // 차트
-    card.appendChild(renderTrendChart(points));
+    // 차트 (포인트 클릭 → 해당 일자 선택)
+    card.appendChild(el('div', { class: 'faint', style: { marginBottom: '4px' } },
+      '그래프의 점을 누르면 그 날짜의 데이터만 아래에 표시됩니다.'));
+    card.appendChild(renderTrendChart(points, { selectedDay, onSelectDate: onSelectDay }));
 
     // 범례 + 루트 카운트
     const counts = { MANUAL: 0, INBODY: 0, OKOK: 0 };
@@ -393,7 +396,7 @@ function qualityPanel(all) {
 
 // ── 체중 탭 렌더 ────────────────────────────────────
 let unsub = null;
-let monthFilter = 'ALL';
+let selectedDay = null;
 
 export function renderWeight(host) {
   if (unsub) unsub();
@@ -412,64 +415,55 @@ export function renderWeight(host) {
       return;
     }
 
-    host.appendChild(insightPanel(all));
+    // 최신 측정일을 기본 선택
+    const sorted = all.slice().sort((a, b) => timelineTime(a) - timelineTime(b));
+    if (!selectedDay) selectedDay = fmtDate(timelineTime(sorted[sorted.length - 1]));
+
+    host.appendChild(insightPanel(all, selectedDay, (day) => { selectedDay = day; draw(); }));
     host.appendChild(qualityPanel(all));
 
-    // 달별 네비게이터 (참고 §1.7)
-    const months = [...new Set(all.map((e) => {
-      const d = new Date(timelineTime(e));
-      return `${d.getFullYear()}-${d.getMonth()}`;
-    }))].sort().reverse();
-    const monthRow = el('div', { class: 'chip-row' });
-    monthRow.appendChild(el('button', {
-      class: 'chip' + (monthFilter === 'ALL' ? ' active' : ''),
-      onClick: () => { monthFilter = 'ALL'; draw(); },
-    }, '전체'));
-    for (const mk of months) {
-      const [y, mo] = mk.split('-');
-      monthRow.appendChild(el('button', {
-        class: 'chip' + (monthFilter === mk ? ' active' : ''),
-        onClick: () => { monthFilter = mk; draw(); },
-      }, fmtYearMonth(new Date(+y, +mo, 1).getTime())));
-    }
-    host.appendChild(el('div', { class: 'section-title' }, '기록 목록'));
-    host.appendChild(monthRow);
-
-    const list = el('div');
-    const visible = all.filter((e) => {
-      if (monthFilter === 'ALL') return true;
-      const d = new Date(timelineTime(e));
-      return `${d.getFullYear()}-${d.getMonth()}` === monthFilter;
-    });
-    for (const e of visible) list.appendChild(weightHistoryCard(e, draw));
-    host.appendChild(list);
+    // 선택한 날짜의 데이터만 표시
+    host.appendChild(el('div', { class: 'section-title' }, '선택한 날짜 기록'));
+    host.appendChild(dayDetailCard(all, selectedDay, draw));
   };
 
   draw();
   unsub = subscribe(draw);
 }
 
-function weightHistoryCard(entry, refresh) {
+// 선택한 날짜의 체중 기록(들)만 상세 표시
+function dayDetailCard(all, day, refresh) {
+  const items = all
+    .filter((e) => fmtDate(timelineTime(e)) === day)
+    .sort((a, b) => timelineTime(b) - timelineTime(a));
+  const card = el('div', { class: 'card' });
+  card.appendChild(el('div', { class: 'cal-title', style: { marginBottom: '10px' } }, day));
+  if (!items.length) {
+    card.appendChild(el('div', { class: 'empty' }, '이 날짜의 기록이 없습니다.'));
+    return card;
+  }
+  for (const e of items) card.appendChild(weightDetailEntry(e, refresh));
+  return card;
+}
+
+function weightDetailEntry(entry, refresh) {
   const route = detectWeightInputRoute(entry);
   const kg = weightKg(entry);
-  const card = el('div', { class: 'entry' });
+  const card = el('div', { class: 'entry', style: { marginBottom: '8px' } });
   card.appendChild(el('div', { class: 'entry__head' }, [
-    el('span', {
-      class: 'badge',
-      style: { color: WEIGHT_ROUTE_COLOR[route] },
-    }, WEIGHT_ROUTE_LABEL[route]),
+    el('span', { class: 'badge', style: { color: WEIGHT_ROUTE_COLOR[route] } }, WEIGHT_ROUTE_LABEL[route]),
     kg != null ? el('b', {}, `${kg}kg`) : null,
     el('span', { class: 'entry__date' }, fmtDateTime(timelineTime(entry))),
-    el('button', {
-      class: 'x',
-      onClick: () => { remove(entry.id); refresh(); },
-    }, '✕'),
+    el('button', { class: 'x', title: '삭제', onClick: () => { remove(entry.id); refresh(); } }, '✕'),
   ]));
-  const body = (entry.text || '')
-    .replace(/^\s*\[(INBODY|OKOK)\]\s*\/?\s*/, '')
-    .split(/\s*\/\s*/)
-    .slice(0, 6)
-    .join(' · ');
-  card.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } }, body));
+  // 측정된 지표 전체를 칩으로 나열
+  const metrics = stripOcrRaw(entry.text)
+    .replace(/^\s*\[(INBODY|OKOK)\]\s*\/\s*/, '')
+    .split(' / ')
+    .map((s) => s.trim())
+    .filter((s) => s && !/^메모\s/.test(s));
+  const grid = el('div', { class: 'metric-chips' });
+  for (const m of metrics) grid.appendChild(el('span', { class: 'metric-chip' }, m));
+  card.appendChild(grid);
   return card;
 }

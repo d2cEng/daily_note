@@ -89,6 +89,11 @@ export function num(v) {
   return isFinite(n) ? n : null;
 }
 
+/** 체중 본문에 보존된 원본 OCR(`--OCR_RAW--` 이후)을 표시용으로 제거 (참고 §1.9) */
+export function stripOcrRaw(text) {
+  return (text || '').split(/\s*--OCR_RAW--/)[0].trim();
+}
+
 /** 파일 다운로드 트리거 */
 export function downloadFile(filename, text, type = 'application/json') {
   const blob = new Blob([text], { type });

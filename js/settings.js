@@ -1,5 +1,5 @@
 // settings.js — 백업 / 가져오기 / 초기화 / 면책
-import { exportJson, importJson, clearAll, getAll } from './store.js';
+import { exportJson, importJson, importTsv, clearAll, getAll } from './store.js';
 import { el, clear, downloadFile, fmtDate } from './util.js';
 import { toast, navigate } from './app.js';
 
@@ -27,26 +27,41 @@ export function renderSettings(host) {
       }, '⬆ JSON 가져오기'),
     ]),
   ]);
+
+  // 메모앱 TSV 가져오기
+  backup.appendChild(el('div', { class: 'muted', style: { margin: '14px 0 8px', fontSize: '13px' } },
+    '안드로이드 메모앱에서 내보낸 체중/운동 TSV 파일을 직접 불러올 수 있습니다.'));
+  backup.appendChild(el('button', {
+    class: 'btn btn--block',
+    onClick: () => tsvInput.click(),
+  }, '📄 메모앱 TSV 가져오기'));
+
+  const readFile = (f, importer, label) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const n = importer(reader.result, 'merge');
+        toast(`${label} ${n}건을 가져왔습니다.`);
+        navigate('settings');
+      } catch (err) {
+        toast('가져오기 실패: ' + err.message);
+      }
+    };
+    reader.readAsText(f);
+  };
+
   const fileInput = el('input', {
     type: 'file', accept: 'application/json,.json',
     style: { display: 'none' },
-    onChange: (e) => {
-      const f = e.target.files[0];
-      if (!f) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const n = importJson(reader.result, 'merge');
-          toast(`${n}건을 병합했습니다.`);
-          navigate('settings');
-        } catch (err) {
-          toast('가져오기 실패: ' + err.message);
-        }
-      };
-      reader.readAsText(f);
-    },
+    onChange: (e) => { const f = e.target.files[0]; if (f) readFile(f, importJson, 'JSON'); },
+  });
+  const tsvInput = el('input', {
+    type: 'file', accept: '.tsv,.txt,text/tab-separated-values,text/plain',
+    style: { display: 'none' },
+    onChange: (e) => { const f = e.target.files[0]; if (f) readFile(f, importTsv, '메모앱'); },
   });
   backup.appendChild(fileInput);
+  backup.appendChild(tsvInput);
   host.appendChild(backup);
 
   // 초기화

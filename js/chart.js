@@ -1,6 +1,6 @@
 // chart.js — SVG 시간축 멀티라인 추세 차트 (참고 §1.6)
 import { WEIGHT_ROUTE_COLOR } from './model.js';
-import { el, fmtDateTime } from './util.js';
+import { el, fmtDateTime, fmtDate } from './util.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 function svgEl(tag, attrs = {}) {
@@ -13,7 +13,7 @@ function svgEl(tag, attrs = {}) {
  * points: [{ t:ms, value:number, route:'MANUAL'|'INBODY'|'OKOK', label:string }]
  * X축 = 시간, Y축 = 값(min~max 정규화). 루트별로 선을 분리해 색칠.
  */
-export function renderTrendChart(points) {
+export function renderTrendChart(points, { selectedDay = null, onSelectDate = null } = {}) {
   const wrap = el('div', { class: 'chart-wrap' });
   if (!points || points.length === 0) {
     wrap.appendChild(el('div', { class: 'empty' }, '표시할 데이터가 없습니다.'));
@@ -80,14 +80,16 @@ export function renderTrendChart(points) {
   // 포인트
   for (const p of points) {
     const color = WEIGHT_ROUTE_COLOR[p.route] || '#9E9E9E';
+    const isSel = selectedDay && fmtDate(p.t) === selectedDay;
     const c = svgEl('circle', {
-      cx: X(p.t), cy: Y(p.value), r: 4,
-      fill: '#0b0e14', stroke: color, 'stroke-width': 2,
-      style: 'cursor:pointer',
+      cx: X(p.t), cy: Y(p.value), r: isSel ? 6.5 : 4,
+      fill: isSel ? color : '#0b0e14', stroke: color, 'stroke-width': 2,
+      style: 'cursor:pointer' + (isSel ? `;filter:drop-shadow(0 0 6px ${color})` : ''),
     });
     const title = svgEl('title');
     title.textContent = `${fmtDateTime(p.t)} [${p.route}] ${p.value}`;
     c.appendChild(title);
+    if (onSelectDate) c.addEventListener('click', () => onSelectDate(fmtDate(p.t)));
     svg.appendChild(c);
   }
 
