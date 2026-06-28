@@ -1,5 +1,5 @@
-// store.js — localStorage 기반 MemoEntry 저장소 + JSON 백업
-import { makeId } from './model.js';
+// store.js — localStorage 기반 MemoEntry 저장소 + JSON/TSV 백업
+import { makeId, CATEGORY } from './model.js';
 
 const STORAGE_KEY = 'daily_note_entries_v1';
 const SETTINGS_KEY = 'daily_note_settings_v1';
@@ -92,6 +92,27 @@ export function exportJson() {
 }
 
 /**
+ * 들어온 엔트리들을 현재 캐시에 병합. mode: 'replace' | 'merge'
+ * merge는 id 기준으로 기존 항목을 갱신, 없으면 추가. 반환: 처리 건수.
+ */
+function mergeEntries(incoming, mode = 'merge') {
+  read();
+  if (mode === 'replace') {
+    cache = incoming.slice();
+  } else {
+    const byId = new Map(cache.map((e) => [e.id, e]));
+    for (const e of incoming) {
+      if (!e.id) e.id = makeId();
+      const existing = byId.get(e.id);
+      if (existing) Object.assign(existing, e);
+      else { cache.push(e); byId.set(e.id, e); }
+    }
+  }
+  persist();
+  return incoming.length;
+}
+
+/**
  * JSON 가져오기. mode: 'replace' | 'merge'
  * 반환: 추가/대체된 건수
  */
@@ -99,21 +120,54 @@ export function importJson(text, mode = 'merge') {
   const parsed = JSON.parse(text);
   const incoming = Array.isArray(parsed) ? parsed : parsed.entries;
   if (!Array.isArray(incoming)) throw new Error('유효한 백업 형식이 아닙니다.');
-  read();
-  if (mode === 'replace') {
-    cache = incoming.slice();
-  } else {
-    const ids = new Set(cache.map((e) => e.id));
-    for (const e of incoming) {
-      if (!e.id) e.id = makeId();
-      if (!ids.has(e.id)) {
-        cache.push(e);
-        ids.add(e.id);
-      }
-    }
+  return mergeEntries(incoming, mode);
+}
+
+/**
+ * 메모앱 TSV(탭 구분 + 헤더행)를 MemoEntry 배열로 변환.
+ * 헤더 기반 매핑이라 컬럼 순서에 의존하지 않음.
+ * 예상 컬럼: id, createdAt, category, text, weightRoute, weight, measuredAt ...
+ */
+export function parseMemoTsv(tsv) {
+  const lines = (tsv || '').replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.length);
+  if (lines.length < 2) return [];
+  const header = lines[0].split('\t').map((h) => h.trim());
+  const col = (name) => header.indexOf(name);
+  const iId = col('id'), iCreated = col('createdAt'), iCat = col('category'),
+    iText = col('text'), iRoute = col('weightRoute'), iWeight = col('weight');
+  if (iCat === -1 || iText === -1) {
+    throw new Error('메모앱 TSV 형식이 아닙니다 (category/text 컬럼 없음).');
   }
-  persist();
-  return incoming.length;
+  const known = new Set(Object.values(CATEGORY));
+  const out = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split('\t');
+    const category = (c[iCat] || '').trim();
+    const text = c[iText] != null ? c[iText] : '';
+    if (!text || !known.has(category)) continue;
+    const createdAt = iCreated !== -1 ? Number(c[iCreated]) : NaN;
+    const weight = iWeight !== -1 ? Number(c[iWeight]) : NaN;
+    const entry = {
+      id: (iId !== -1 && c[iId]) ? c[iId].trim() : makeId(),
+      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+      category,
+      text,
+    };
+    if (iRoute !== -1 && c[iRoute]) entry.weightRoute = c[iRoute].trim();
+    if (Number.isFinite(weight)) entry.amount = weight;
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * 메모앱 TSV 가져오기. mode: 'replace' | 'merge'
+ * 반환: 가져온 건수.
+ */
+export function importTsv(tsv, mode = 'merge') {
+  const incoming = parseMemoTsv(tsv);
+  if (!incoming.length) throw new Error('가져올 기록이 없습니다.');
+  return mergeEntries(incoming, mode);
 }
 
 // ── 설정 ──────────────────────────────────────────────

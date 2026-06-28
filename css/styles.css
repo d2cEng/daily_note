@@ -699,6 +699,23 @@ svg.trend {
   border-radius: 50%;
 }
 
+/* 선택 날짜 지표 칩 */
+.metric-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.metric-chip {
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 /* 장소 토글 (짐/홈) */
 .loc-toggle {
   display: inline-flex;

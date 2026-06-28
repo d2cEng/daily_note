@@ -1,5 +1,5 @@
 // sw.js — 오프라인 캐시 서비스워커
-const CACHE = 'vitalog-v3';
+const CACHE = 'vitalog-v4';
 const ASSETS = [
   './',
   './index.html',
