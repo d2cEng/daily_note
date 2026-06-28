@@ -630,6 +630,155 @@ svg.trend {
   margin: 22px 0 10px;
 }
 
+/* 캘린더뷰 */
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.cal-title {
+  font-weight: 800;
+  font-size: 16px;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.cal-wd {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-faint);
+  padding-bottom: 4px;
+}
+.cal-wd:first-child {
+  color: #ff7b97;
+}
+.cal-cell {
+  aspect-ratio: 1;
+  border-radius: 9px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 5px;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.12s;
+}
+.cal-cell--empty {
+  border: 0;
+  background: none;
+  cursor: default;
+}
+.cal-cell.is-today {
+  border-color: var(--neon-cyan);
+}
+.cal-cell.is-selected {
+  border-color: var(--neon-magenta);
+  box-shadow: 0 0 10px rgba(255, 46, 151, 0.4);
+}
+.cal-day {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.cal-dots {
+  display: flex;
+  gap: 3px;
+  margin-top: auto;
+  margin-bottom: 6px;
+}
+.cal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+/* 장소 토글 (짐/홈) */
+.loc-toggle {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.loc-toggle button {
+  border: 0;
+  background: var(--bg-2);
+  color: var(--text-dim);
+  padding: 7px 16px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+.loc-toggle button.active {
+  background: var(--neon-cyan);
+  color: #04222a;
+}
+
+/* OKOK 상세 지표 입력 */
+.detail-fold {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--bg-2);
+}
+.detail-fold > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--neon-cyan);
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+.detail-grid label.field {
+  margin-bottom: 4px;
+}
+.detail-grid label.field > span {
+  font-size: 11px;
+}
+.detail-grid input {
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+/* 품질/이상치 패널 */
+.issue {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px 13px;
+  margin-bottom: 9px;
+  background: var(--surface);
+}
+.issue--fail {
+  border-color: rgba(255, 176, 32, 0.4);
+}
+.issue--outlier {
+  border-color: rgba(255, 46, 151, 0.45);
+}
+.issue__tag {
+  font-size: 11px;
+  font-weight: 700;
+  margin-right: 8px;
+}
+.issue--fail .issue__tag {
+  color: var(--neon-amber);
+}
+.issue--outlier .issue__tag {
+  color: var(--neon-magenta);
+}
+
 .keyword-row {
   display: flex;
   gap: 6px;

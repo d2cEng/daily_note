@@ -1,5 +1,5 @@
 // sw.js — 오프라인 캐시 서비스워커
-const CACHE = 'neonlift-v1';
+const CACHE = 'vitalog-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -13,6 +13,8 @@ const ASSETS = [
   './js/weight.js',
   './js/chart.js',
   './js/supplement.js',
+  './js/quality.js',
+  './js/calendar.js',
   './js/recommend.js',
   './js/session.js',
   './js/settings.js',

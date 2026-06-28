@@ -1,7 +1,7 @@
 {
-  "name": "NEON LIFT — 운동 트래커",
-  "short_name": "NEON LIFT",
-  "description": "운동·체중·보충제 기록과 가이드 세션",
+  "name": "VITALOG — 건강 관리 일지",
+  "short_name": "VITALOG",
+  "description": "운동·체중·보충제를 가이드 세션으로 기록하는 건강 관리 일지",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

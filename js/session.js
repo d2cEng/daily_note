@@ -4,7 +4,7 @@ import { add } from './store.js';
 import { el, clear, sessionMode, num } from './util.js';
 import { toast, navigate } from './app.js';
 import { recommendationCard, SUPPLEMENTS } from './supplement.js';
-import { recommendWorkout } from './recommend.js';
+import { recommendWorkout, recommendHomeWorkout } from './recommend.js';
 import { createWorkoutEditor } from './workout.js';
 
 const TOTAL_STEPS = 6;
@@ -13,6 +13,7 @@ export function renderHome(host) {
   const state = {
     step: 1,
     mode: sessionMode(),
+    location: 'gym', // gym | home
     suppLogged: null, // 보충제 객체
     suppAt: null,
     routine: null,
@@ -118,11 +119,32 @@ export function renderHome(host) {
   }
 
   // ── 3) 운동 추천 ──
+  function computeRoutine() {
+    state.routine = state.location === 'home'
+      ? recommendHomeWorkout(state.mode)
+      : recommendWorkout(state.mode);
+  }
   function stepRecommend() {
     host.appendChild(stepHeader(3, '운동 추천'));
-    state.routine = state.routine || recommendWorkout(state.mode);
+    if (!state.routine) computeRoutine();
     const r = state.routine;
     const card = el('div', { class: 'card' + (state.step === 3 ? ' card--glow' : '') });
+
+    // 장소 토글 (짐 / 홈)
+    const toggle = el('div', { class: 'loc-toggle' });
+    for (const [loc, label] of [['gym', '🏟 짐 (Technogym)'], ['home', '🏠 홈트레이닝']]) {
+      toggle.appendChild(el('button', {
+        class: state.location === loc ? 'active' : '',
+        onClick: () => {
+          if (state.location === loc) return;
+          state.location = loc;
+          computeRoutine();
+          render();
+        },
+      }, label));
+    }
+    card.appendChild(toggle);
+
     card.appendChild(el('div', { class: 'faint' }, '오늘의 추천 분할'));
     card.appendChild(el('div', { style: { fontWeight: '800', fontSize: '17px', marginBottom: '8px' } }, r.split));
     for (const m of r.machines) {
