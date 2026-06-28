@@ -1,0 +1,383 @@
+// weight.js — 체중(WEIGHT) 탭 (참고 문서 §1)
+import { CATEGORY, WEIGHT_ROUTE, WEIGHT_ROUTE_LABEL, WEIGHT_ROUTE_COLOR, makeEntry } from './model.js';
+import { add, getByCategory, remove, subscribe } from './store.js';
+import { el, clear, fmtDate, fmtYearMonth, fmtDateTime, signed, parseMeasuredAt, num } from './util.js';
+import { renderTrendChart } from './chart.js';
+import { toast } from './app.js';
+
+// ── §1.3 지표 사전 ─────────────────────────────────
+export const OKOK_METRICS = [
+  '체중(Kg)', 'BMI', '지방(%)', '체질 지방량(Kg)', '골격근 비율(%)', '골격근량(Kg)',
+  '근육 기록(%)', '근육량(Kg)', '수분(%)', '물의 무게(Kg)', '내장지방', '골격 기록(Kg)',
+  '기초대사', '단백질(%)', '비만도(%)', '대사 연령', '지방을 뺀 체중(LBM)(Kg)', '실제 나이', '신장(cm)',
+];
+export const INBODY_CORE = ['체중(kg)', '골격근량(kg)', '체지방률(%)', 'BMI(kg/m²)', '기초대사량(kcal)'];
+
+// 라벨 정규화 (참고 §1.3)
+const CANON = {
+  체중: '체중(Kg)', 체지방률: '지방(%)', 골격근량: '골격근량(Kg)',
+};
+export function canonicalWeightMetricLabel(label) {
+  return CANON[label] || label;
+}
+
+// ── §1.1 루트 판별 ─────────────────────────────────
+export function detectWeightInputRoute(entry) {
+  if (entry.weightRoute) return entry.weightRoute;
+  const t = entry.text || '';
+  if (/^\s*\[INBODY\]/.test(t)) return WEIGHT_ROUTE.INBODY;
+  if (/^\s*\[OKOK\]/.test(t)) return WEIGHT_ROUTE.OKOK;
+  if (/인바디|INBODY/i.test(t)) return WEIGHT_ROUTE.INBODY;
+  if (/측정일/.test(t) && /BMI/i.test(t)) return WEIGHT_ROUTE.OKOK;
+  return WEIGHT_ROUTE.MANUAL;
+}
+
+// ── §1.2 인코딩 ────────────────────────────────────
+function ensureUnit(value, unit) {
+  const s = String(value).trim();
+  if (s === '') return s;
+  return /[a-zA-Z%]$/.test(s) ? s : s + unit;
+}
+
+export function buildInbodyMemoText({ weight, skeletalMuscle, bodyFat, note }) {
+  const parts = ['[INBODY]', `체중 ${ensureUnit(weight, 'kg')}`];
+  if (skeletalMuscle) parts.push(`골격근량 ${ensureUnit(skeletalMuscle, 'kg')}`);
+  if (bodyFat) parts.push(`체지방률 ${ensureUnit(bodyFat, '%')}`);
+  if (note) parts.push(`메모 ${note}`);
+  return parts.join(' / ');
+}
+
+export function buildOkokMemoText({ weight, bodyFat, bmi, measuredAt, note }) {
+  const parts = ['[OKOK]', `체중 ${ensureUnit(weight, 'kg')}`];
+  if (bodyFat) parts.push(`체지방률 ${ensureUnit(bodyFat, '%')}`);
+  if (bmi) parts.push(`BMI ${bmi}`);
+  if (measuredAt) parts.push(`측정일 ${measuredAt}`);
+  if (note) parts.push(`메모 ${note}`);
+  return parts.join(' / ');
+}
+
+// ── §3 지표값 추출 ─────────────────────────────────
+export function extractWeightMetricValue(text, label) {
+  const idx = text.indexOf(label);
+  if (idx === -1) return null;
+  const after = text.slice(idx + label.length);
+  const m = after.match(/(-?\d+(?:[.,]\d+)?)/);
+  return m ? parseFloat(m[1].replace(',', '.')) : null;
+}
+
+// 체중 kg 값 (캐시 amount 우선)
+export function weightKg(entry) {
+  if (entry.amount != null) return entry.amount;
+  const m = (entry.text || '').match(/(\d+(?:[.,]\d+)?)\s*kg/i);
+  return m ? parseFloat(m[1].replace(',', '.')) : null;
+}
+
+// 타임라인 정렬 기준 시각 (측정일 우선, 참고 §1.4)
+export function timelineTime(entry) {
+  const m = (entry.text || '').match(/측정일\s+([\d/.\-:\s]+)/);
+  if (m) {
+    const ms = parseMeasuredAt(m[1]);
+    if (ms) return ms;
+  }
+  return entry.createdAt;
+}
+
+// 차트 포인트 빌드
+export function buildPoints(entries, label) {
+  const pts = [];
+  for (const e of entries) {
+    const route = detectWeightInputRoute(e);
+    const value =
+      label && label !== '체중'
+        ? extractWeightMetricValue(e.text, label)
+        : weightKg(e);
+    if (value == null) continue;
+    pts.push({ t: timelineTime(e), value, route, id: e.id });
+  }
+  return pts.sort((a, b) => a.t - b.t);
+}
+
+// 데이터가 존재하는 추이 지표 목록 (드롭다운용)
+export function availableMetrics(entries) {
+  const set = new Set(['체중']);
+  for (const e of entries) {
+    for (const label of [...OKOK_METRICS, ...INBODY_CORE]) {
+      if (extractWeightMetricValue(e.text, label) != null) set.add(label);
+    }
+  }
+  return [...set];
+}
+
+// ── 입력 폼 (Composer, 참고 §1.5) ──────────────────
+function composer(onSaved) {
+  let route = WEIGHT_ROUTE.MANUAL;
+  const card = el('div', { class: 'card card--glow' }, [
+    el('h2', { class: 'card__title' }, '체중 입력'),
+  ]);
+  const seg = el('div', { class: 'segment' });
+  const formHost = el('div');
+
+  for (const r of [WEIGHT_ROUTE.MANUAL, WEIGHT_ROUTE.INBODY, WEIGHT_ROUTE.OKOK]) {
+    seg.appendChild(
+      el('button', {
+        'data-route': r,
+        class: r === route ? 'active' : '',
+        onClick: () => {
+          route = r;
+          seg.querySelectorAll('button').forEach((b) =>
+            b.classList.toggle('active', b.dataset.route === r)
+          );
+          renderForm();
+        },
+      }, WEIGHT_ROUTE_LABEL[r])
+    );
+  }
+
+  function field(labelText, input) {
+    return el('label', { class: 'field' }, [el('span', {}, labelText), input]);
+  }
+  const inp = (ph, type = 'number') =>
+    el('input', { type, inputmode: type === 'number' ? 'decimal' : 'text', placeholder: ph });
+
+  function renderForm() {
+    clear(formHost);
+    if (route === WEIGHT_ROUTE.MANUAL) {
+      const ta = el('textarea', { placeholder: '예: 72.4kg (일반 체중 메모)' });
+      formHost.appendChild(field('체중 메모', ta));
+      formHost.appendChild(saveBtn(() => {
+        if (!ta.value.trim()) return toast('체중 메모를 입력해주세요.');
+        save(ta.value.trim(), WEIGHT_ROUTE.MANUAL, num(ta.value));
+      }));
+    } else if (route === WEIGHT_ROUTE.INBODY) {
+      const w = inp('필수'), sm = inp('선택'), bf = inp('선택');
+      const note = el('input', { placeholder: '선택' });
+      formHost.appendChild(field('체중(kg) *', w));
+      formHost.appendChild(field('골격근량(kg)', sm));
+      formHost.appendChild(field('체지방률(%)', bf));
+      formHost.appendChild(field('메모', note));
+      formHost.appendChild(saveBtn(() => {
+        if (!w.value) return toast('인바디 체중 값을 입력해주세요.');
+        const text = buildInbodyMemoText({
+          weight: w.value, skeletalMuscle: sm.value, bodyFat: bf.value, note: note.value,
+        });
+        save(text, WEIGHT_ROUTE.INBODY, num(w.value));
+      }));
+    } else {
+      const w = inp('필수'), bf = inp('선택'), bmi = inp('선택');
+      const md = el('input', { placeholder: 'yyyy/MM/dd HH:mm:ss' });
+      const note = el('input', { placeholder: '선택' });
+      formHost.appendChild(field('체중(kg) *', w));
+      formHost.appendChild(field('체지방률(%)', bf));
+      formHost.appendChild(field('BMI', bmi));
+      formHost.appendChild(field('측정일', md));
+      formHost.appendChild(field('메모', note));
+      formHost.appendChild(saveBtn(() => {
+        if (!w.value) return toast('OKOK 체중 값을 입력해주세요.');
+        if (md.value && !parseMeasuredAt(md.value))
+          return toast('측정일을 yyyy/MM/dd HH:mm:ss 형식으로 입력해주세요.');
+        const text = buildOkokMemoText({
+          weight: w.value, bodyFat: bf.value, bmi: bmi.value,
+          measuredAt: md.value, note: note.value,
+        });
+        save(text, WEIGHT_ROUTE.OKOK, num(w.value));
+      }));
+    }
+  }
+  function saveBtn(fn) {
+    return el('button', { class: 'btn btn--primary btn--block', onClick: fn }, '체중 저장');
+  }
+  function save(text, weightRoute, amount) {
+    add(makeEntry({ text, category: CATEGORY.WEIGHT, weightRoute, amount }));
+    toast('체중 저장 완료 ⚖️');
+    renderForm();
+    if (onSaved) onSaved();
+  }
+
+  card.appendChild(seg);
+  card.appendChild(formHost);
+  renderForm();
+  return card;
+}
+
+// ── 인사이트 패널 (참고 §1.6) ──────────────────────
+const PERIODS = [
+  { label: '7일', days: 7 }, { label: '14일', days: 14 },
+  { label: '30일', days: 30 }, { label: '60일', days: 60 },
+  { label: '90일', days: 90 }, { label: '180일', days: 180 },
+  { label: '1년', days: 365 }, { label: '전체', days: Infinity },
+];
+
+function insightPanel(allEntries) {
+  let periodDays = 30;
+  let metric = '체중';
+  const card = el('div', { class: 'card' });
+
+  function render() {
+    clear(card);
+    card.appendChild(el('h2', { class: 'card__title' }, '체중 경과 인사이트'));
+
+    // 기간 탭
+    const tabs = el('div', { class: 'chip-row' });
+    for (const p of PERIODS) {
+      tabs.appendChild(el('button', {
+        class: 'chip' + (p.days === periodDays ? ' active' : ''),
+        onClick: () => { periodDays = p.days; render(); },
+      }, p.label));
+    }
+    card.appendChild(tabs);
+
+    // 측정일 기준 정렬 + 기간 필터
+    const sorted = allEntries.slice().sort((a, b) => timelineTime(a) - timelineTime(b));
+    let filtered = sorted;
+    if (periodDays !== Infinity && sorted.length) {
+      const latest = timelineTime(sorted[sorted.length - 1]);
+      const cutoff = latest - periodDays * 86400000;
+      filtered = sorted.filter((e) => timelineTime(e) >= cutoff);
+      if (!filtered.length) filtered = [sorted[sorted.length - 1]];
+    }
+
+    // 추이 항목 드롭다운
+    const metrics = availableMetrics(allEntries);
+    const sel = el('select', {
+      onChange: (e) => { metric = e.target.value; render(); },
+    });
+    for (const m of metrics) {
+      const o = el('option', { value: m }, m);
+      if (m === metric) o.selected = true;
+      sel.appendChild(o);
+    }
+    card.appendChild(el('label', { class: 'field' }, [
+      el('span', {}, '추이 항목'), sel,
+    ]));
+
+    const points = buildPoints(filtered, metric);
+    const values = points.map((p) => p.value);
+
+    // 통계 7종
+    if (values.length) {
+      const cur = values[values.length - 1];
+      const prev = values.length > 1 ? values[values.length - 2] : cur;
+      const avg = values.reduce((a, b) => a + b, 0) / values.length;
+      const lo = Math.min(...values), hi = Math.max(...values);
+      const grid = el('div', { class: 'stat-grid' });
+      const stat = (label, val, cls) =>
+        el('div', { class: 'stat' }, [
+          el('div', { class: 'stat__label' }, label),
+          el('div', { class: 'stat__value ' + (cls || '') }, val),
+        ]);
+      const dir = (d) => (d > 0 ? 'up' : d < 0 ? 'down' : '');
+      grid.appendChild(stat('현재', cur.toFixed(1)));
+      grid.appendChild(stat('직전 대비', signed(cur - prev), dir(cur - prev)));
+      grid.appendChild(stat('평균', avg.toFixed(1)));
+      grid.appendChild(stat('최저 대비', signed(cur - lo), dir(cur - lo)));
+      grid.appendChild(stat('최고 대비', signed(cur - hi), dir(cur - hi)));
+      grid.appendChild(stat('범위', (hi - lo).toFixed(1)));
+      grid.appendChild(stat('최고', hi.toFixed(1)));
+      grid.appendChild(stat('최저', lo.toFixed(1)));
+      grid.appendChild(stat('기록 수', String(values.length)));
+      card.appendChild(grid);
+    }
+
+    // 차트
+    card.appendChild(renderTrendChart(points));
+
+    // 범례 + 루트 카운트
+    const counts = { MANUAL: 0, INBODY: 0, OKOK: 0 };
+    for (const e of allEntries) counts[detectWeightInputRoute(e)]++;
+    const legend = el('div', { class: 'legend' });
+    for (const r of ['INBODY', 'OKOK', 'MANUAL']) {
+      legend.appendChild(el('span', {}, [
+        el('span', { class: 'dot', style: { background: WEIGHT_ROUTE_COLOR[r] } }),
+        `${WEIGHT_ROUTE_LABEL[r]} ${counts[r]}`,
+      ]));
+    }
+    card.appendChild(legend);
+    card.appendChild(el('div', { class: 'faint', style: { marginTop: '6px' } },
+      `기록 ${points.length}건 · 전체 ${allEntries.length}건`));
+  }
+
+  render();
+  return card;
+}
+
+// ── 체중 탭 렌더 ────────────────────────────────────
+let unsub = null;
+let monthFilter = 'ALL';
+
+export function renderWeight(host) {
+  if (unsub) unsub();
+  clear(host);
+
+  const draw = () => {
+    clear(host);
+    const all = getByCategory(CATEGORY.WEIGHT);
+
+    host.appendChild(composer(draw));
+
+    if (!all.length) {
+      host.appendChild(el('div', { class: 'card' }, [
+        el('div', { class: 'empty' }, '체중 기록을 추가하면 인사이트 차트가 나타납니다.'),
+      ]));
+      return;
+    }
+
+    host.appendChild(insightPanel(all));
+
+    // 달별 네비게이터 (참고 §1.7)
+    const months = [...new Set(all.map((e) => {
+      const d = new Date(timelineTime(e));
+      return `${d.getFullYear()}-${d.getMonth()}`;
+    }))].sort().reverse();
+    const monthRow = el('div', { class: 'chip-row' });
+    monthRow.appendChild(el('button', {
+      class: 'chip' + (monthFilter === 'ALL' ? ' active' : ''),
+      onClick: () => { monthFilter = 'ALL'; draw(); },
+    }, '전체'));
+    for (const mk of months) {
+      const [y, mo] = mk.split('-');
+      monthRow.appendChild(el('button', {
+        class: 'chip' + (monthFilter === mk ? ' active' : ''),
+        onClick: () => { monthFilter = mk; draw(); },
+      }, fmtYearMonth(new Date(+y, +mo, 1).getTime())));
+    }
+    host.appendChild(el('div', { class: 'section-title' }, '기록 목록'));
+    host.appendChild(monthRow);
+
+    const list = el('div');
+    const visible = all.filter((e) => {
+      if (monthFilter === 'ALL') return true;
+      const d = new Date(timelineTime(e));
+      return `${d.getFullYear()}-${d.getMonth()}` === monthFilter;
+    });
+    for (const e of visible) list.appendChild(weightHistoryCard(e, draw));
+    host.appendChild(list);
+  };
+
+  draw();
+  unsub = subscribe(draw);
+}
+
+function weightHistoryCard(entry, refresh) {
+  const route = detectWeightInputRoute(entry);
+  const kg = weightKg(entry);
+  const card = el('div', { class: 'entry' });
+  card.appendChild(el('div', { class: 'entry__head' }, [
+    el('span', {
+      class: 'badge',
+      style: { color: WEIGHT_ROUTE_COLOR[route] },
+    }, WEIGHT_ROUTE_LABEL[route]),
+    kg != null ? el('b', {}, `${kg}kg`) : null,
+    el('span', { class: 'entry__date' }, fmtDateTime(timelineTime(entry))),
+    el('button', {
+      class: 'x',
+      onClick: () => { remove(entry.id); refresh(); },
+    }, '✕'),
+  ]));
+  const body = (entry.text || '')
+    .replace(/^\s*\[(INBODY|OKOK)\]\s*\/?\s*/, '')
+    .split(/\s*\/\s*/)
+    .slice(0, 6)
+    .join(' · ');
+  card.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } }, body));
+  return card;
+}
