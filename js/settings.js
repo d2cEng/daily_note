@@ -46,7 +46,7 @@ export function renderSettings(host) {
     class: 'btn btn--block',
     style: { marginTop: '8px' },
     onClick: () => okokInput.click(),
-  }, '📷 OKOK 스크린샷 가져오기'));
+  }, '📷 OKOK 스크린샷 가져오기 (여러 장 가능)'));
   // OCR 진행/검토 영역
   const okokArea = el('div', { style: { marginTop: '12px' } });
   backup.appendChild(okokArea);
@@ -84,31 +84,36 @@ export function renderSettings(host) {
     },
   });
   const okokInput = el('input', {
-    type: 'file', accept: 'image/*',
+    type: 'file', accept: 'image/*', multiple: true,
     style: { display: 'none' },
     onChange: async (e) => {
-      const f = e.target.files[0];
-      if (!f) return;
-      const imageUrl = URL.createObjectURL(f);
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
       clear(okokArea);
-      const status = el('div', { class: 'note' }, 'OCR 분석 중… 0%');
+      const status = el('div', { class: 'note' }, `OCR 분석 준비 중… (0/${files.length})`);
       okokArea.appendChild(status);
-      try {
-        const text = await ocrImage(f, (p) => {
-          status.textContent = `OCR 분석 중… ${Math.round(p * 100)}%`;
-        });
-        const parsed = parseOkokOcrText(text);
-        clear(okokArea);
-        okokArea.appendChild(okokReviewCard(parsed, {
-          imageUrl,
-          onSaved: () => { clear(okokArea); navigate('settings'); },
-        }));
-      } catch (err) {
-        clear(okokArea);
-        okokArea.appendChild(el('div', { class: 'note note--warn' }, 'OCR 실패: ' + err.message));
-      } finally {
-        okokInput.value = '';
+      const cards = el('div');
+      okokArea.appendChild(cards);
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const imageUrl = URL.createObjectURL(f);
+        status.textContent = `OCR 분석 중… (${i + 1}/${files.length}) 0%`;
+        try {
+          const text = await ocrImage(f, (p) => {
+            status.textContent = `OCR 분석 중… (${i + 1}/${files.length}) ${Math.round(p * 100)}%`;
+          });
+          const parsed = parseOkokOcrText(text);
+          const card = okokReviewCard(parsed, {
+            imageUrl, rawText: text,
+            onSaved: () => { card.classList.add('is-saved'); },
+          });
+          cards.appendChild(card);
+        } catch (err) {
+          cards.appendChild(el('div', { class: 'note note--warn' }, `${f.name} OCR 실패: ${err.message}`));
+        }
       }
+      status.textContent = `${files.length}장 분석 완료 · 각 카드에서 확인 후 저장하세요.`;
+      okokInput.value = '';
     },
   });
   backup.appendChild(fileInput);

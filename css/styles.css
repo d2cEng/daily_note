@@ -712,6 +712,31 @@ svg.trend {
 .input--missing {
   border-color: var(--neon-amber) !important;
 }
+.ocr-raw {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  border-radius: 8px;
+  padding: 10px;
+  margin-top: 10px;
+  max-height: 220px;
+  overflow: auto;
+}
+.card.is-saved {
+  opacity: 0.55;
+}
+.card.is-saved::after {
+  content: '✓ 저장됨';
+  display: block;
+  text-align: center;
+  color: var(--neon-cyan);
+  font-weight: 700;
+  font-size: 13px;
+  margin-top: 6px;
+}
 
 /* 선택 날짜 지표 칩 */
 .metric-chips {
