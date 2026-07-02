@@ -128,18 +128,23 @@ const LABEL_KEYS = [
 ];
 
 // 라벨별 타당 범위 — 범위 밖이면 OCR 깨진 값으로 보고 채택하지 않음
+// (실측 코퍼스 기준: 화살표 오인식 '1', 조각 숫자 '9' 등 잡음 차단을 위해 정밀화)
 const BOUNDS = {
-  '체중(Kg)': [20, 300], 'BMI': [5, 60], '지방(%)': [1, 70],
-  '체질 지방량(Kg)': [1, 200], '골격근 비율(%)': [5, 80], '골격근량(Kg)': [5, 120],
-  '근육 기록(%)': [1, 200], '근육량(Kg)': [5, 200], '수분(%)': [20, 80],
-  '물의 무게(Kg)': [5, 150], '내장지방': [1, 60], '골격 기록(Kg)': [0.5, 12],
-  '기초대사': [500, 4000], '단백질(%)': [1, 40], '비만도(%)': [1, 400],
-  '대사 연령': [1, 120], '지방을 뺀 체중(LBM)(Kg)': [5, 220],
-  '실제 나이': [1, 120], '신장(cm)': [50, 250],
+  '체중(Kg)': [20, 300], 'BMI': [10, 60], '지방(%)': [3, 70],
+  '체질 지방량(Kg)': [2, 150], '골격근 비율(%)': [10, 80], '골격근량(Kg)': [10, 120],
+  '근육 기록(%)': [10, 200], '근육량(Kg)': [10, 200], '수분(%)': [20, 80],
+  '물의 무게(Kg)': [10, 150], '내장지방': [1, 60], '골격 기록(Kg)': [0.5, 12],
+  '기초대사': [500, 4000], '단백질(%)': [5, 40], '비만도(%)': [3, 400],
+  '대사 연령': [5, 100], '지방을 뺀 체중(LBM)(Kg)': [30, 220],
+  '실제 나이': [5, 100], '신장(cm)': [100, 250],
 };
+// 화면상 정수로만 표시되는 지표 — 소수값이면 오매칭으로 판단
+const INTEGER_ONLY = new Set(['실제 나이', '신장(cm)']);
 function inBounds(label, v) {
   const b = BOUNDS[label];
-  return !b || (v >= b[0] && v <= b[1]);
+  if (b && (v < b[0] || v > b[1])) return false;
+  if (INTEGER_ONLY.has(label) && !Number.isInteger(v)) return false;
+  return true;
 }
 
 // 줄에서 키워드들의 마지막 끝 위치(하나라도 없으면 -1)
@@ -153,23 +158,171 @@ function keywordEnd(line, keys) {
   return end;
 }
 
-/**
- * OKOK 스크린샷 OCR 텍스트 → { values:{label:number}, measuredAt }.
- * 각 라벨에 대해 키워드 매칭 줄에서 라벨 바로 뒤 첫 숫자를 추출하고,
- * 타당 범위를 통과하는 값만 채택(뒤쪽 상태어/화살표는 무시).
- */
-export function parseOkokOcrText(text) {
+// ── 패스1: 줄 기반 (라벨과 값이 같은 줄에 있는 레이아웃) ──
+// 근접 제약: 라벨 끝 24자 이내의 숫자만 인정(컬럼형 텍스트에서 오매칭 방지)
+function lineParse(text) {
   const lines = (text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const values = {};
   const used = new Set();
-
   for (const [label, keys] of LABEL_KEYS) {
     for (let i = 0; i < lines.length; i++) {
       if (used.has(i)) continue;
       const end = keywordEnd(lines[i], keys);
       if (end === -1) continue;
-      const v = firstNumber(lines[i].slice(end));
+      const v = firstNumber(lines[i].slice(end, end + 24));
       if (v != null && inBounds(label, v)) { values[label] = v; used.add(i); break; }
+    }
+  }
+  return { values, count: Object.keys(values).length };
+}
+
+// ── 패스2: 순서 정렬 (실제 OCR의 컬럼 분리 출력 대응) ──
+// 실기기 OCR은 라벨 열 전체 → 값 열 전체 순으로 읽어 라벨·값이 다른 위치에
+// 나온다. 값들은 19개 지표의 화면 순서를 유지하므로, 숫자 토큰 시퀀스를
+// 지표 순서에 정렬(LCS형 DP)해 복원한다.
+const STATUS_AFTER = /^(높음|낮음|표준|건강|비만|보통임|보통의|보통|완전함|완전한|미만|과다|적정|정상|부족|위험)/;
+
+function stripDatesTimes(text) {
+  return text
+    .replace(/\d{4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}/g, ' ')
+    .replace(/\d{1,2}:\d{2}(?::\d{2})?/g, ' ');
+}
+
+// 숫자 토큰 추출(순서 유지). 변화량(±부호)·단위 부착(%·Kg·cm 등)·날짜는 제외.
+// 각 토큰에 상태어 인접 여부를 기록(실값 뒤에는 높음/비만/완전한 등이 붙음).
+function extractTokens(text) {
+  const t = stripDatesTimes(text).replace(/[↑↓▲▼△▽⬆⬇|]/g, ' ');
+  const tokens = [];
+  const re = /\d+(?:[.,]\d+)?/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const prev = t[m.index - 1] || ' ';
+    if (prev === '+' || prev === '-' || prev === ',' || prev === '.') continue;
+    const after = t.slice(m.index + m[0].length);
+    if (/^(%|[Kk][GgQq]|[Cc][Mm]|kcal)/.test(after)) continue; // 단위 부착 수치(권장체중 등)
+    const v = toNum(m[0]);
+    if (v == null) continue;
+    tokens.push({ value: v, status: STATUS_AFTER.test(after.trimStart()) });
+  }
+  return tokens;
+}
+
+function alignOnce(tokens, preferLate, metrics = OKOK_METRICS) {
+  const M = metrics.length, N = tokens.length;
+  const dp = Array.from({ length: M + 1 }, () => new Float64Array(N + 1));
+  const bt = Array.from({ length: M + 1 }, () => new Uint8Array(N + 1)); // 0=지표 스킵 1=토큰 스킵 2=매칭
+  for (let i = 1; i <= M; i++) {
+    for (let j = 0; j <= N; j++) {
+      let best = dp[i - 1][j], from = 0;
+      if (j > 0) {
+        if (dp[i][j - 1] > best) { best = dp[i][j - 1]; from = 1; }
+        const tok = tokens[j - 1];
+        if (inBounds(metrics[i - 1], tok.value)) {
+          // 동점 해소용 미세 위치 보너스(앞쪽/뒤쪽 선호 두 후보를 만들어
+          // 아래 항등식 검증으로 승자를 고른다)
+          const posBias = (preferLate ? j : N - j) / (N + 1) * 0.01;
+          const s = dp[i - 1][j - 1] + 1 + (tok.status ? 0.25 : 0) + posBias;
+          if (s > best) { best = s; from = 2; }
+        }
+      }
+      dp[i][j] = best; bt[i][j] = from;
+    }
+  }
+  const values = {};
+  let i = M, j = N, count = 0;
+  while (i > 0 && j >= 0) {
+    const f = bt[i][j];
+    if (f === 2) { values[metrics[i - 1]] = tokens[j - 1].value; count++; i--; j--; }
+    else if (f === 1) { j--; }
+    else { i--; }
+  }
+  return { values, count };
+}
+
+// 생리학적 항등식 — 정렬이 한 칸이라도 밀리면 깨지므로 강력한 판별 신호
+function identityScore(v) {
+  const w = v['체중(Kg)'];
+  if (!w) return 0;
+  const near = (a, b) => a != null && b != null && Math.abs(a - b) <= Math.max(1.5, b * 0.03);
+  let s = 0;
+  if (near(v['지방(%)'], (v['체질 지방량(Kg)'] / w) * 100)) s++;
+  if (near(v['골격근 비율(%)'], (v['골격근량(Kg)'] / w) * 100)) s++;
+  if (near(v['근육 기록(%)'], (v['근육량(Kg)'] / w) * 100)) s++;
+  if (near(v['수분(%)'], (v['물의 무게(Kg)'] / w) * 100)) s++;
+  if (near(v['지방을 뺀 체중(LBM)(Kg)'], w - v['체질 지방량(Kg)'])) s++;
+  return s;
+}
+
+// LBM 앵커 보정: LBM = 체중 − 체질지방량은 유일하게 절대값으로 유도 가능한
+// 항등식이다. 승자의 LBM이 이를 위반하면 토큰에서 기대값과 일치하는 앵커를
+// 찾아 고정(pin)하고, 앞/뒤 구간을 분할 재정렬해 꼬리 시프트를 복구한다.
+const LBM_LABEL = '지방을 뺀 체중(LBM)(Kg)';
+function repairWithLbmAnchor(tokens, res) {
+  const v = res.values;
+  const w = v['체중(Kg)'], fat = v['체질 지방량(Kg)'];
+  if (w == null || fat == null) return res;
+  const target = w - fat;
+  const tol = Math.max(1.5, target * 0.03);
+  if (v[LBM_LABEL] != null && Math.abs(v[LBM_LABEL] - target) <= tol) return res;
+
+  // 기대 LBM과 일치하는 마지막 토큰을 앵커로
+  let k = -1;
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (Math.abs(tokens[i].value - target) <= tol) { k = i; break; }
+  }
+  if (k === -1) { delete v[LBM_LABEL]; return res; } // 틀린 LBM은 비움
+
+  const li = OKOK_METRICS.indexOf(LBM_LABEL);
+  const head = alignOnce(tokens.slice(0, k), true, OKOK_METRICS.slice(0, li));
+  const tail = alignOnce(tokens.slice(k + 1), true, OKOK_METRICS.slice(li + 1));
+  const values = { ...head.values, [LBM_LABEL]: tokens[k].value, ...tail.values };
+  return { values, count: head.count + 1 + tail.count };
+}
+
+function alignOkokSequence(text) {
+  const tokens = extractTokens(text);
+  const late = alignOnce(tokens, true);
+  const early = alignOnce(tokens, false);
+  const score = (r) => r.count + 2 * identityScore(r.values);
+  const winner = score(late) >= score(early) ? late : early;
+  return repairWithLbmAnchor(tokens, winner);
+}
+
+// 테스트/보정용: 두 정렬 후보와 점수를 노출
+export function __debugAlign(text) {
+  const tokens = extractTokens(text);
+  const late = alignOnce(tokens, true);
+  const early = alignOnce(tokens, false);
+  return {
+    tokens,
+    late: { ...late, idScore: identityScore(late.values) },
+    early: { ...early, idScore: identityScore(early.values) },
+  };
+}
+
+/**
+ * OKOK 스크린샷 OCR 텍스트 → { values:{label:number}, measuredAt }.
+ * 줄 기반·순서 정렬 두 패스를 모두 돌려 매칭 수가 많은 쪽을 기본으로 병합.
+ * (엔진이 행 단위로 읽으면 패스1, 컬럼 단위로 읽으면 패스2가 이긴다.)
+ */
+export function parseOkokOcrText(text) {
+  const lineRes = lineParse(text);
+  const seqRes = alignOkokSequence(text || '');
+  const seqOk = seqRes.count >= 8; // 신뢰 하한 미달이면 시퀀스 결과 폐기
+
+  let values;
+  if (seqOk && seqRes.count > lineRes.count) {
+    values = { ...lineRes.values, ...seqRes.values };
+  } else {
+    values = { ...(seqOk ? seqRes.values : {}), ...lineRes.values };
+  }
+
+  // 교차필드 검증: 신체 구성 값은 체중보다 클 수 없다. 위반 시 비워서
+  // 검토 폼에서 직접 입력하게 한다(중복 체중값 오매칭 방지).
+  const w = values['체중(Kg)'];
+  if (w != null) {
+    for (const l of ['지방을 뺀 체중(LBM)(Kg)', '체질 지방량(Kg)', '골격근량(Kg)', '근육량(Kg)', '물의 무게(Kg)']) {
+      if (values[l] != null && values[l] >= w) delete values[l];
     }
   }
 
